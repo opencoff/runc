@@ -1,7 +1,3 @@
-.PHONY: all shell dbuild man \
-	    localtest localunittest localintegration \
-	    test unittest integration
-
 SOURCES := $(shell find . 2>&1 | grep -E '.*\.(c|h|go)$$')
 PREFIX := $(DESTDIR)/usr/local
 BINDIR := $(PREFIX)/sbin
@@ -9,7 +5,7 @@ GIT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
 GIT_BRANCH_CLEAN := $(shell echo $(GIT_BRANCH) | sed -e "s/[^[:alnum:]]/-/g")
 RUNC_IMAGE := runc_dev$(if $(GIT_BRANCH_CLEAN),:$(GIT_BRANCH_CLEAN))
 PROJECT := github.com/opencontainers/runc
-BUILDTAGS := seccomp
+#BUILDTAGS := seccomp
 COMMIT_NO := $(shell git rev-parse HEAD 2> /dev/null || true)
 COMMIT := $(if $(shell git status --porcelain --untracked-files=no),"${COMMIT_NO}-dirty","${COMMIT_NO}")
 
@@ -24,17 +20,46 @@ VERSION := ${shell cat ./VERSION}
 
 SHELL := $(shell command -v bash 2>/dev/null)
 
-.DEFAULT: runc
+android-arm64-CC = aarch64-linux-android-gcc
+android-arm-CC = arm-linux-androideabi-gcc
 
-runc: $(SOURCES)
-	go build -i -ldflags "-X main.gitCommit=${COMMIT} -X main.version=${VERSION}" -tags "$(BUILDTAGS)" -o runc .
+ifeq ($(ANDROID),1)
+	export CGO_ENABLED=1
+	export CC=$(android-arm64-CC)
+	export GOOS=android
+	export GOARCH=arm64
+
+	isuffix = --installsuffix cgo
+	ldflags = -s -w
+
+	BUILDTAGS :=
+
+	bindir := bin/$(GOOS)-$(GOARCH)
+else
+	goos := $(shell go env GOOS)
+	goarch := $(shell go env GOARCH)
+	bindir := bin/$(goos)-$(goarch)
+endif
+
+.PHONY: all $(bindir) shell dbuild man \
+	    localtest localunittest localintegration \
+	    test unittest integration
+
+
+DEFAULT: $(bindir)/runc
+
+$(bindir)/runc: $(bindir) $(SOURCES)
+	go build -o $@ $(isuffix) -i -ldflags "-X main.gitCommit=${COMMIT} -X main.version=${VERSION} $(ldflags)" -tags "$(BUILDTAGS)" .
+
+$(bindir):
+	@mkdir -p $@
 
 all: runc recvtty
 
 recvtty: contrib/cmd/recvtty/recvtty
 
 contrib/cmd/recvtty/recvtty: $(SOURCES)
-	go build -i -ldflags "-X main.gitCommit=${COMMIT} -X main.version=${VERSION}" -tags "$(BUILDTAGS)" -o contrib/cmd/recvtty/recvtty ./contrib/cmd/recvtty
+	go build $(isuffix) -i -ldflags "-X main.gitCommit=${COMMIT} -X main.version=${VERSION}" -tags "$(BUILDTAGS)" -o contrib/cmd/recvtty/recvtty ./contrib/cmd/recvtty
 
 static: $(SOURCES)
 	CGO_ENABLED=1 go build -i -tags "$(BUILDTAGS) cgo static_build" -ldflags "-w -extldflags -static -X main.gitCommit=${COMMIT} -X main.version=${VERSION}" -o runc .
